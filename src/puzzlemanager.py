@@ -6,7 +6,7 @@ from typing import Tuple, Union, List
 import time
 from PIL import Image
 
-from number_detection import detect_number
+import number_detection
 from solver import Nonogram, CellState
 
 
@@ -139,11 +139,11 @@ class PuzzleManager:
             for x in range(self.puzzle.width):
                 color = puzzle_region.getpixel(self.get_cell_center_coords(x, y))
                 if color == MARKED_COLOR:
-                    self.puzzle.puzzle[y][x].initial_state = CellState.MARKED
+                    self.puzzle.puzzle[y][x].cell.initial_state = CellState.MARKED
                 elif color == CROSS_COLOR:
-                    self.puzzle.puzzle[y][x].initial_state = CellState.BLOCKED
+                    self.puzzle.puzzle[y][x].cell.initial_state = CellState.BLOCKED
                 else:
-                    self.puzzle.puzzle[y][x].initial_state = CellState.FREE
+                    self.puzzle.puzzle[y][x].cell.initial_state = CellState.FREE
 
     def read_hints(self, puzzle_region: Image) -> None:
         horizontal_hints_size = self.get_cell_size(-1, 0)
@@ -155,17 +155,18 @@ class PuzzleManager:
         for y in range(self.puzzle.height):
             for x in range(horizontal_hint_count):
                 region = puzzle_region.crop((self.col_start[0] + int(x * hint_width), self.row_start[y+1], self.col_start[0] + int((x + 1) * hint_width) + 1, self.row_end[y+1] + 1))
-                number = detect_number(region)
+                number = number_detection.detect_number(region)
                 if number > 0:
                     self.puzzle.add_horizontal_hint(y, number)
         for x in range(self.puzzle.width):
             for y in range(vertical_hint_count):
                 region = puzzle_region.crop((self.col_start[x+1], self.row_start[0] + int(y * hint_height), self.col_end[x+1] + 1, self.row_start[0] + int((y+1) * hint_height) + 1))
-                number = detect_number(region)
+                number = number_detection.detect_number(region)
                 if number > 0:
                     self.puzzle.add_vertical_hint(x, number)
 
     def read_puzzle(self) -> None:
+        number_detection.init_tesseract()
         with tempfile.TemporaryDirectory(prefix='Nonogram') as tempdir:
             screenshot = os.path.join(tempdir, 'screen.png')
             self.get_screenshot(screenshot)
@@ -179,17 +180,28 @@ class PuzzleManager:
         self.fill_cells(puzzle_region)
         self.read_hints(puzzle_region)
 
-    def apply_puzzle(self) -> None:
+    def _apply_cell(self, x: int, y: int, crosses):
+        initial = self.puzzle.puzzle[y][x].cell.initial_state
+        state = self.puzzle.puzzle[y][x].cell.state
+        if initial != state:
+            if state == CellState.MARKED:
+                self.click_cell(x, y, 1)
+            elif state == CellState.BLOCKED:
+                if crosses:
+                    self.click_cell(x, y, 3)
+            elif initial == CellState.MARKED:
+                self.click_cell(x, y, 1)
+            elif initial == CellState.BLOCKED:
+                if crosses:
+                    self.click_cell(x, y, 3)
+
+    def apply_puzzle_in_solve_order(self, crosses=True) -> None:
+        self.focus_window()
+        for x, y in self.puzzle.solve_order:
+            self._apply_cell(x, y, crosses)
+
+    def apply_puzzle(self, crosses=True) -> None:
+        self.focus_window()
         for y in range(self.puzzle.height):
             for x in range(self.puzzle.width):
-                initial = self.puzzle.puzzle[y][x].initial_state
-                state = self.puzzle.puzzle[y][x].state
-                if initial != state:
-                    if state == CellState.MARKED:
-                        self.click_cell(x, y, 1)
-                    elif state == CellState.BLOCKED:
-                        self.click_cell(x, y, 3)
-                    elif initial == CellState.MARKED:
-                        self.click_cell(x, y, 1)
-                    elif initial == CellState.BLOCKED:
-                        self.click_cell(x, y, 3)
+                self._apply_cell(x, y, crosses)

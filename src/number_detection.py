@@ -4,22 +4,11 @@ import pytesseract
 
 from PIL import Image
 
-DATA_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data')
+ROOT_PATH = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
+OCR_PATH = os.path.join(ROOT_PATH, 'ocr')
+DATA_PATH = os.path.join(ROOT_PATH, 'data')
 WHITE = (255, 255, 255)
 EMPTY_CUTOFF = 0.99
-
-LOOKUP_100_PERCENT_ZOOM = [
-    0,  # 0
-    0.457,  # 1
-    0.261,  # 2
-    0.285,  # 3
-    0.309,  # 4
-    0.357,  # 5
-    0.166,  # 6
-    0.428,  # 7
-    0.114,  # 8
-    0,  # 9
-]
 
 
 def white_ratio(region: Image) -> float:
@@ -79,32 +68,55 @@ def crop_content(region: Image) -> Image:
         left += 1
     while white_line(right - 1, 0, 0, 1):
         right -= 1
-    return region.crop((left, top, right, bottom))
+    return region.crop((left - 2, top - 2, right + 2, bottom + 2))
 
 
-def find_number_for_100_percent(region: Image) -> int:
-    ratio = white_ratio(region)
-    miv = 0
-    for i, v in enumerate(LOOKUP_100_PERCENT_ZOOM):
-        if abs(ratio - v) < abs(ratio - LOOKUP_100_PERCENT_ZOOM[miv]):
-            miv = i
-    return miv
+def init_tesseract() -> None:
+    configs = [
+        'load_system_dawg F',
+        'load_freq_dawg F',
+        'load_unambig_dawg F',
+        'load_punc_dawg F',
+        'load_bigram_dawg F',
+        'load_number_dawg T',
+        'user_words_file {}'.format(os.path.join(OCR_PATH, 'eng.user-words')),
+    ]
+    with open(os.path.join(OCR_PATH, 'eng.user-words'), 'w') as f:
+        for i in range(1, 100):
+            print(i, file=f)
+    with open(os.path.join(OCR_PATH, 'config'), 'w') as f:
+        for config in configs:
+            print(config, file=f)
+
+
+tesseract_fixes = {}
 
 
 def find_number_with_tesseract(region: Image) -> int:
-    text = pytesseract.image_to_string(region, config='--psm 8').strip()
+    text = pytesseract.image_to_string(region, config='--psm 8 "{}"'.format(os.path.join(OCR_PATH, 'config'))).strip()
     if text.isdigit():
         return int(text)
+    if text in tesseract_fixes:
+        return tesseract_fixes[text]
+    # TODO teach Tesseract that it should only detect numbers
+    print('Could not detect number, got:', text)
+    save_region(region, 'not detect')
+    region.show()
+    value = input()
+    if value.isdigit():
+        tesseract_fixes[text] = int(value)
+        return int(value)
     return 0
 
 
 def detect_number(region: Image) -> int:
-    # TODO try not to use tesseract
     region = cut_off_border(region)
     if region is None or is_empty(region):
         return 0
-    # region = crop_content(region)
-    # number = find_number_for_100_percent(region)
+    region = crop_content(region)
     number = find_number_with_tesseract(region)
-    # region.save(os.path.join(DATA_PATH, 'region_{}_{}_{}.png'.format(number, white_ratio(region), time.time())))
     return number
+
+
+def save_region(region: Image, message: str) -> None:
+    region.save(os.path.join(DATA_PATH, 'region_{}_{}.png'.format(time.time(), message)))
